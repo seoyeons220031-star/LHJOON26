@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   addFriendById,
   createGroupConversation,
@@ -34,6 +34,8 @@ import {
   BellOff,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+type ConversationSummary = Awaited<ReturnType<typeof listConversations>>[number];
 
 export const Route = createFileRoute("/_authenticated/chats")({
   component: ChatsHome,
@@ -397,7 +399,7 @@ function LiveDashboard({
   pulse,
   lastEventAt,
 }: {
-  data: Awaited<ReturnType<typeof listConversations>>;
+  data: ConversationSummary[];
   pulse: number;
   lastEventAt: number | null;
 }) {
@@ -524,7 +526,7 @@ function ChatList({
   onNewGroup,
   onLeave,
 }: {
-  data: Awaited<ReturnType<typeof listConversations>>;
+  data: ConversationSummary[];
   loading: boolean;
   onNewGroup: () => void;
   onLeave: (id: string, name: string) => void;
@@ -825,6 +827,114 @@ function AddFriendModal({ onClose, onAdded }: { onClose: () => void; onAdded: ()
   );
 }
 
+function NewGroupModal({
+  friends,
+  onClose,
+  onCreated,
+}: {
+  friends: Profile[];
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleCreate = async () => {
+    if (selectedIds.size === 0) {
+      toast.error("Select at least one friend");
+      return;
+    }
+    setCreating(true);
+    try {
+      const convId = await createGroupConversation({
+        title: title.trim() || undefined,
+        participant_ids: Array.from(selectedIds),
+      });
+      toast.success("Group created!");
+      onCreated(convId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create group");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">New Group</h2>
+        <button onClick={onClose} className="rounded-full p-1 hover:bg-secondary">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="mb-4">
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          Group Name (Optional)
+        </label>
+        <input
+          placeholder="e.g. Weekend Trip"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">
+        Select Friends ({selectedIds.size})
+      </div>
+      <div className="max-h-60 overflow-y-auto rounded-xl border border-border">
+        {friends.length === 0 ? (
+          <div className="p-4 text-center text-xs text-muted-foreground">
+            No friends to add. Add friends first!
+          </div>
+        ) : (
+          friends.map((f) => {
+            const isSelected = selectedIds.has(f.id);
+            return (
+              <div
+                key={f.id}
+                onClick={() => toggleSelect(f.id)}
+                className="flex cursor-pointer items-center justify-between border-b border-border px-3 py-2.5 last:border-b-0 hover:bg-secondary/50"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={f.display_name} url={f.avatar_url} size={32} />
+                  <span className="text-sm font-medium">{f.display_name}</span>
+                </div>
+                <div
+                  className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                    isSelected
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-muted-foreground/40"
+                  }`}
+                >
+                  {isSelected && <Check className="h-3 w-3" />}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <button
+        onClick={handleCreate}
+        disabled={creating || selectedIds.size === 0}
+        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition disabled:opacity-50"
+      >
+        {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+        Create Group
+      </button>
+    </Modal>
+  );
+}
+
 function ProfilePanel({
   profile,
   loading,
@@ -897,18 +1007,15 @@ function ProfilePanel({
     }
   };
 
-  const dirty = displayName.trim() !== profile.display_name;
-
   return (
-    <div className="px-5 py-6">
-      <div className="flex flex-col items-center">
+    <div className="p-4 space-y-6">
+      <div className="flex flex-col items-center gap-3">
         <div className="relative">
-          <Avatar name={displayName || profile.display_name} url={avatarUrl} size={104} />
+          <Avatar name={displayName || profile.display_name} url={avatarUrl} size={96} />
           <button
-            type="button"
             onClick={handlePickFile}
             disabled={uploading}
-            className="absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground shadow disabled:opacity-60"
+            className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition hover:scale-105 disabled:opacity-50"
             title="Change photo"
           >
             {uploading ? (
@@ -925,145 +1032,47 @@ function ProfilePanel({
             onChange={handleFile}
           />
         </div>
-        <div className="mt-3 text-xs text-muted-foreground">@{profile.username}</div>
+        <div className="text-center">
+          <h3 className="text-lg font-bold">{profile.display_name}</h3>
+          <p className="text-xs text-muted-foreground">@{profile.username}</p>
+        </div>
       </div>
 
-      <div className="mt-6 space-y-2">
-        <label className="text-xs font-medium text-muted-foreground">Display name</label>
-        <input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          maxLength={60}
-          className="w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-        />
+      <div className="space-y-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            Display Name
+          </label>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            placeholder="Your display name"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            Username
+          </label>
+          <input
+            type="text"
+            value={`@${profile.username}`}
+            disabled
+            className="w-full rounded-xl border border-input bg-muted px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
+          />
+        </div>
+
         <button
           onClick={handleSave}
-          disabled={!dirty || saving}
-          className="mt-2 w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+          disabled={saving || displayName.trim() === profile.display_name}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
         >
-          {saving ? "Saving…" : "Save changes"}
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save Changes
         </button>
       </div>
     </div>
-  );
-}
-
-function NewGroupModal({
-  friends,
-  onClose,
-  onCreated,
-}: {
-  friends: Profile[];
-  onClose: () => void;
-  onCreated: (id: string) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-
-  const canCreate = useMemo(() => selected.size >= 1, [selected]);
-
-  const toggle = (id: string) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelected(next);
-  };
-
-  const create = async () => {
-    setLoading(true);
-    try {
-      const selectedList = Array.from(selected);
-      if (selectedList.length === 0) {
-        throw new Error("대화 상대를 선택해주세요.");
-      }
-
-      let id: string;
-      if (selectedList.length === 1) {
-        // Only 1 friend selected: Open or create a 1:1 direct conversation instead
-        id = await openDirectConversation(selectedList[0]);
-        toast.success("1:1 대화방이 연결되었습니다.");
-      } else {
-        // 2 or more friends selected: Create a group conversation
-        const finalTitle =
-          title.trim() ||
-          friends
-            .filter((f) => selected.has(f.id))
-            .map((f) => f.display_name)
-            .slice(0, 3)
-            .join(", ") ||
-          "새로운 그룹 채팅방";
-        id = await createGroupConversation(finalTitle, selectedList);
-        toast.success("그룹 채팅방이 생성되었습니다.");
-      }
-      onCreated(id);
-      onClose();
-    } catch (e) {
-      console.error("[Room Creation Error]", e);
-      toast.error(e instanceof Error ? e.message : "채팅방 생성에 실패했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal onClose={onClose}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">New group</h2>
-        <button onClick={onClose} className="rounded-full p-1 hover:bg-secondary">
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-      <input
-        placeholder="Group name (optional)"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        className="mb-3 w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-      />
-      <div className="mb-1 text-xs font-medium text-muted-foreground">
-        Select friends ({selected.size} selected — min 1)
-      </div>
-      <ul className="max-h-72 overflow-y-auto rounded-xl border border-border">
-        {friends.length === 0 && (
-          <li className="p-4 text-center text-sm text-muted-foreground">
-            Add friends first to create a group.
-          </li>
-        )}
-        {friends.map((f) => {
-          const on = selected.has(f.id);
-          return (
-            <li key={f.id}>
-              <button
-                type="button"
-                onClick={() => toggle(f.id)}
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-secondary/60 ${
-                  on ? "bg-secondary/50" : ""
-                }`}
-              >
-                <Avatar name={f.display_name} url={f.avatar_url} size={36} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{f.display_name}</div>
-                  <div className="truncate text-xs text-muted-foreground">@{f.username}</div>
-                </div>
-                <div
-                  className={`flex h-6 w-6 items-center justify-center rounded-full border ${
-                    on ? "border-primary bg-primary text-primary-foreground" : "border-border"
-                  }`}
-                >
-                  {on && <Check className="h-4 w-4" />}
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <button
-        onClick={create}
-        disabled={!canCreate || loading}
-        className="mt-4 w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
-      >
-        {loading ? "Creating…" : "Create group"}
-      </button>
-    </Modal>
   );
 }
