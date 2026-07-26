@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addFriendById,
   createGroupConversation,
+  getConversationTitle,
   getMyProfile,
+  getUserDisplayName,
   leaveConversation,
   listConversations,
   listFriends,
@@ -38,19 +40,6 @@ import { formatDistanceToNow } from "date-fns";
 export const Route = createFileRoute("/_authenticated/chats")({
   component: ChatsHome,
 });
-
-function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; email?: string | null; profile?: { display_name?: string | null; username?: string | null; email?: string | null } } | null): string {
-  if (!user) return "친구";
-  const target = user.profile || user;
-  if (target.display_name?.trim()) return target.display_name.trim();
-  const emailVal = target.email || user.email || "";
-  if (emailVal && typeof emailVal === "string") {
-    const emailPrefix = (emailVal.split("@")[0] || "").trim();
-    if (emailPrefix) return emailPrefix;
-  }
-  if (target.username?.trim()) return target.username.trim();
-  return "친구";
-}
 
 function Avatar({ name, url, size = 40 }: { name?: string | null; url?: string | null; size?: number }) {
   const safeName = (name || "").trim() || "사용자";
@@ -245,14 +234,7 @@ function ChatsHome() {
                       );
                     }
                     return unreadConvs.map((c) => {
-                      const name = c.is_group
-                        ? c.title ||
-                          c.participants
-                            .map((p) => p.display_name)
-                            .slice(0, 2)
-                            .join(", ") ||
-                          "Group"
-                        : (c.participants[0]?.display_name ?? "Chat");
+                      const name = getConversationTitle(c, c.participants?.[0]);
                       const preview = c.last_message?.content ?? "새 메시지가 있습니다.";
                       return (
                         <button
@@ -465,14 +447,7 @@ function LiveDashboard({
       {recent.length > 0 && (
         <div className="mt-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
           {recent.map((c) => {
-            const name = c.is_group
-              ? c.title ||
-                c.participants
-                  .map((p) => p.display_name)
-                  .slice(0, 2)
-                  .join(", ") ||
-                "Group"
-              : (c.participants[0]?.display_name ?? "Chat");
+            const name = getConversationTitle(c, c.participants?.[0]);
             const isActive = now - new Date(c.last_message_at).getTime() < 5 * 60 * 1000;
             return (
               <Link
@@ -582,15 +557,7 @@ function ChatList({
     <ul className="divide-y divide-border">
       {data.map((c) => {
         if (!c) return null;
-        const name = c.is_group
-          ? c.title ||
-            c.participants
-              ?.map((p) => getUserDisplayName(p))
-              .filter(Boolean)
-              .slice(0, 3)
-              .join(", ") ||
-            "그룹 채팅"
-          : getUserDisplayName(c.participants?.[0]);
+        const name = getConversationTitle(c, c.participants?.[0]);
         const avatarName = name;
         const preview = c.last_message?.content ?? "메시지가 없습니다.";
         const open = menuId === c.id;
@@ -1049,7 +1016,7 @@ function NewGroupModal({
           title.trim() ||
           friends
             .filter((f) => selected.has(f.id))
-            .map((f) => f.display_name)
+            .map((f) => getUserDisplayName(f))
             .slice(0, 3)
             .join(", ") ||
           "새로운 그룹 채팅방";
@@ -1090,7 +1057,10 @@ function NewGroupModal({
           </li>
         )}
         {friends.map((f) => {
+          if (!f) return null;
           const on = selected.has(f.id);
+          const name = getUserDisplayName(f);
+          const uname = f.username || (f.email ? (f.email || "").split("@")[0] : "사용자");
           return (
             <li key={f.id}>
               <button
@@ -1100,10 +1070,10 @@ function NewGroupModal({
                   on ? "bg-secondary/50" : ""
                 }`}
               >
-                <Avatar name={f.display_name} url={f.avatar_url} size={36} />
+                <Avatar name={name} url={f.avatar_url} size={36} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{f.display_name}</div>
-                  <div className="truncate text-xs text-muted-foreground">@{f.username}</div>
+                  <div className="truncate text-sm font-medium">{name}</div>
+                  <div className="truncate text-xs text-muted-foreground">@{uname}</div>
                 </div>
                 <div
                   className={`flex h-6 w-6 items-center justify-center rounded-full border ${

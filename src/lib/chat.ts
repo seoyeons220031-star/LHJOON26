@@ -26,6 +26,7 @@ export type Message = {
 export type ConversationSummary = {
   id: string;
   is_group: boolean;
+  name?: string | null;
   title: string | null;
   last_message_at: string;
   participants: Profile[];
@@ -51,7 +52,7 @@ export async function getMyProfile(): Promise<Profile | null> {
   return sanitizeProfile(data);
 }
 
-function sanitizeProfile(p: { id?: string; username?: string | null; display_name?: string | null; avatar_url?: string | null; email?: string | null } | null | undefined): Profile {
+function sanitizeProfile(p: { id?: string; username?: string | null; display_name?: string | null; name?: string | null; avatar_url?: string | null; email?: string | null } | null | undefined): Profile {
   if (!p) {
     return {
       id: "",
@@ -60,15 +61,77 @@ function sanitizeProfile(p: { id?: string; username?: string | null; display_nam
       avatar_url: null,
     };
   }
-  const emailName = p.email ? (p.email || "").split("@")[0] || "사용자" : "";
-  const name = p.display_name?.trim() || emailName || p.username?.trim() || "사용자";
-  const username = p.username?.trim() || emailName || "사용자";
+  const emailPrefix = (p.email || "").split("@")[0] || "";
+  const name =
+    p.display_name?.trim() ||
+    p.username?.trim() ||
+    p.name?.trim() ||
+    emailPrefix ||
+    "사용자";
+  const username = p.username?.trim() || emailPrefix || name || "사용자";
   return {
     id: p.id || "",
     username,
     display_name: name,
     avatar_url: p.avatar_url || null,
   };
+}
+
+export function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; name?: string | null; email?: string | null; profile?: { display_name?: string | null; username?: string | null; name?: string | null; email?: string | null } } | null): string {
+  if (!user) return "상대방";
+  const target = user.profile || user;
+  if (target.display_name?.trim()) return target.display_name.trim();
+  if (target.username?.trim()) return target.username.trim();
+  if (target.name?.trim()) return target.name.trim();
+  const emailVal = target.email || user.email || "";
+  if (emailVal && typeof emailVal === "string") {
+    const emailPrefix = (emailVal.split("@")[0] || "").trim();
+    if (emailPrefix) return emailPrefix;
+  }
+  return "상대방";
+}
+
+export function getConversationTitle(
+  conv?: {
+    is_group?: boolean;
+    name?: string | null;
+    title?: string | null;
+    participants?: Profile[];
+  } | null,
+  otherUser?: Profile | { display_name?: string | null; username?: string | null; email?: string | null; profile?: Profile | null } | null
+): string {
+  if (!conv) return "채팅방";
+
+  const explicitName = (conv.name || conv.title || "").trim();
+
+  if (conv.is_group) {
+    if (explicitName) return explicitName;
+    if (conv.participants && conv.participants.length > 0) {
+      const names = conv.participants
+        .map((p) => getUserDisplayName(p))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      if (names) return names;
+    }
+    return "그룹 채팅";
+  }
+
+  // 1-on-1 direct chat
+  if (explicitName) return explicitName;
+
+  const target = otherUser || conv.participants?.[0];
+  if (target) {
+    const prof = "profile" in target && target.profile ? target.profile : target;
+    const name =
+      prof.display_name?.trim() ||
+      prof.username?.trim() ||
+      (prof.email && typeof prof.email === "string" ? prof.email.split("@")[0] : null) ||
+      "상대방";
+    if (name) return name;
+  }
+
+  return "상대방";
 }
 
 export async function listFriends(): Promise<Profile[]> {
@@ -229,6 +292,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     return {
       id: c.id,
       is_group: c.is_group,
+      name: (c as { name?: string | null }).name ?? null,
       title: c.title,
       last_message_at: c.last_message_at,
       participants,
@@ -252,12 +316,24 @@ export async function openDirectConversation(otherUserId: string): Promise<strin
 }
 
 export async function createGroupConversation(title: string, memberIds: string[]): Promise<string> {
+  const cleanTitle = title.trim() || "그룹 채팅방";
   const { data, error } = await supabase.rpc("create_group_conversation", {
-    _title: title,
+    _title: cleanTitle,
     _members: memberIds,
   });
   if (error) throw error;
-  return data as string;
+  const convId = data as string;
+
+  try {
+    await supabase
+      .from("conversations")
+      .update({ title: cleanTitle, name: cleanTitle } as unknown as { title: string })
+      .eq("id", convId);
+  } catch {
+    // Ignore if column is missing
+  }
+
+  return convId;
 }
 
 export async function leaveConversation(conversationId: string) {
@@ -287,7 +363,7 @@ export async function renameConversation(conversationId: string, title: string) 
   const clean = title.trim().slice(0, 60);
   const { error } = await supabase
     .from("conversations")
-    .update({ title: clean || null })
+    .update({ title: clean || null, name: clean || null } as unknown as { title: string | null })
     .eq("id", conversationId);
   if (error) throw error;
 }
@@ -486,12 +562,14 @@ export async function getConversationDetail(conversationId: string) {
   const profMap = new Map((profs ?? []).map((p) => [p.id, sanitizeProfile(p)]));
 
   return {
-    conversation: conv as {
-      id: string;
-      is_group: boolean;
-      title: string | null;
-      pinned_message_id: string | null;
-      theme_slug: string | null;
+    conversation: {
+      id: conv.id,
+      is_group: conv.is_group,
+      name: (conv as { name?: string | null }).name ?? null,
+      title: conv.title ?? null,
+      pinned_message_id: conv.pinned_message_id ?? null,
+      theme_slug: conv.theme_slug ?? null,
+      created_at: (conv as { created_at?: string }).created_at ?? null,
     },
     me,
     myMuted: Boolean((parts ?? []).find((p) => p.user_id === me)?.muted),

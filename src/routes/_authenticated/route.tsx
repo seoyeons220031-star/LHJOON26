@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getActiveConversation } from "@/lib/active-conversation";
 import type { ConversationSummary, Message } from "@/lib/chat";
-import { listConversations } from "@/lib/chat";
+import { listConversations, getConversationTitle } from "@/lib/chat";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
@@ -65,7 +65,7 @@ function AuthedLayout() {
             sender?.display_name?.trim() ||
             senderEmailPrefix ||
             sender?.username ||
-            (conv?.is_group ? (conv.title ?? "그룹") : "새 메시지");
+            (conv ? getConversationTitle(conv) : "새 메시지");
           const preview = m.content?.trim()
             ? m.content
             : m.attachment_type?.startsWith("image/")

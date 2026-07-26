@@ -71,17 +71,31 @@ function AuthPage() {
         if (chkErr) throw chkErr;
         if (existing) throw new Error("이미 사용 중인 ID예요.");
 
-        const { error } = await supabase.auth.signUp({
+        const nameToUse = displayName.trim() || uname;
+        const { data: signUpData, error } = await supabase.auth.signUp({
           email: toEmail(uname),
           password: stretchPassword(password),
           options: {
             data: {
+              display_name: nameToUse,
               username: uname,
-              display_name: displayName.trim() || uname,
+              name: nameToUse,
             },
           },
         });
         if (error) throw error;
+
+        if (signUpData?.user?.id) {
+          const userId = signUpData.user.id;
+          await supabase.from("profiles").upsert(
+            {
+              id: userId,
+              username: uname,
+              display_name: nameToUse,
+            },
+            { onConflict: "id" }
+          );
+        }
         toast.success("가입 완료! 로그인되었어요.");
       } else {
         const { error } = await supabase.auth.signInWithPassword({

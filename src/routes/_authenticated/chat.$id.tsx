@@ -6,7 +6,9 @@ import {
   deleteMessage,
   editMessage,
   getConversationDetail,
+  getConversationTitle,
   getMessageById,
+  getUserDisplayName,
   leaveConversation,
   loadMessages,
   markConversationRead,
@@ -70,17 +72,6 @@ type ScheduledMessage = {
   scheduled_at: string;
   created_at: string;
 };
-
-function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; email?: string | null } | null): string {
-  if (!user) return "사용자";
-  if (user.display_name?.trim()) return user.display_name.trim();
-  if (user.email) {
-    const emailPrefix = (user.email || "").split("@")[0] || "사용자";
-    if (emailPrefix) return emailPrefix;
-  }
-  if (user.username?.trim()) return user.username.trim();
-  return "사용자";
-}
 
 function Avatar({ name, url, size = 32 }: { name?: string | null; url?: string | null; size?: number }) {
   const safeName = (name || "").trim() || "사용자";
@@ -184,6 +175,7 @@ function ChatRoom() {
   const [me, setMe] = useState<string | null>(null);
   const [conv, setConv] = useState<{
     is_group: boolean;
+    name?: string | null;
     title: string | null;
     pinned_message_id: string | null;
     theme_slug: ChatThemeSlug;
@@ -360,6 +352,7 @@ function ChatRoom() {
         setMe(detail.me);
         setConv({
           is_group: detail.conversation.is_group,
+          name: detail.conversation.name,
           title: detail.conversation.title,
           pinned_message_id: detail.conversation.pinned_message_id ?? null,
           theme_slug: (detail.conversation.theme_slug as ChatThemeSlug) ?? "mint",
@@ -473,6 +466,7 @@ function ChatRoom() {
         async (payload) => {
           const c = payload.new as {
             pinned_message_id: string | null;
+            name?: string | null;
             title: string | null;
             is_group: boolean;
             theme_slug: string | null;
@@ -482,7 +476,8 @@ function ChatRoom() {
               ? {
                   ...prev,
                   pinned_message_id: c.pinned_message_id,
-                  title: c.title,
+                  name: c.name ?? prev.name,
+                  title: c.title ?? prev.title,
                   theme_slug: (c.theme_slug as ChatThemeSlug) ?? prev.theme_slug,
                 }
               : prev,
@@ -877,12 +872,12 @@ function ChatRoom() {
 
   const handleRename = async () => {
     setShowMore(false);
-    const current = conv?.title ?? "";
+    const current = conv?.name || conv?.title || "";
     const next = prompt("채팅방 이름을 입력하세요", current);
     if (next === null) return;
     try {
       await renameConversation(id, next);
-      setConv((prev) => (prev ? { ...prev, title: next.trim() || null } : prev));
+      setConv((prev) => (prev ? { ...prev, name: next.trim() || null, title: next.trim() || null } : prev));
       toast.success("채팅방 이름을 변경했어요.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "변경 실패");
@@ -1005,16 +1000,18 @@ function ChatRoom() {
   const otherParticipants = participants.filter((p) => p && p.user_id !== me);
   const firstOtherProf = otherParticipants[0]?.profile;
 
-  const title = conv?.is_group
-    ? conv.title ||
-      participants
-        .filter((p) => p && p.user_id !== me)
-        .map((p) => getUserDisplayName(p.profile))
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(", ") ||
-      "그룹 채팅"
-    : getUserDisplayName(firstOtherProf);
+  const convForTitle = useMemo(() => {
+    return conv
+      ? {
+          is_group: conv.is_group,
+          name: conv.name,
+          title: conv.title,
+          participants: participants.map((p) => p.profile).filter(Boolean) as Profile[],
+        }
+      : null;
+  }, [conv, participants]);
+
+  const title = getConversationTitle(convForTitle, firstOtherProf);
 
   const subtitle = conv?.is_group
     ? `${participants.length}명의 대화 상대`
@@ -1355,7 +1352,7 @@ function ChatRoom() {
                   >
                     {showSender && (
                       <div className="mb-0.5 pl-3 text-[11px] font-medium text-muted-foreground">
-                        {prof?.display_name}
+                        {getUserDisplayName(prof)}
                       </div>
                     )}
 
@@ -2016,7 +2013,7 @@ function ChatRoom() {
                           className="group relative flex flex-col gap-1.5 rounded-xl border border-border p-3 transition bg-secondary/30 hover:bg-secondary/50"
                         >
                           <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
-                            <span>{prof?.display_name ?? "사용자"}</span>
+                            <span>{getUserDisplayName(prof)}</span>
                             <span>{format(new Date(m.created_at), "MM.dd HH:mm")}</span>
                           </div>
                           <p className="text-xs text-foreground leading-relaxed">
