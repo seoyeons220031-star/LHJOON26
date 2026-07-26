@@ -39,15 +39,17 @@ export const Route = createFileRoute("/_authenticated/chats")({
   component: ChatsHome,
 });
 
-function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; email?: string | null } | null): string {
-  if (!user) return "사용자";
-  if (user.display_name?.trim()) return user.display_name.trim();
-  if (user.email) {
-    const emailPrefix = (user.email || "").split("@")[0] || "사용자";
+function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; email?: string | null; profile?: { display_name?: string | null; username?: string | null; email?: string | null } } | null): string {
+  if (!user) return "친구";
+  const target = user.profile || user;
+  if (target.display_name?.trim()) return target.display_name.trim();
+  const emailVal = target.email || user.email || "";
+  if (emailVal && typeof emailVal === "string") {
+    const emailPrefix = (emailVal.split("@")[0] || "").trim();
     if (emailPrefix) return emailPrefix;
   }
-  if (user.username?.trim()) return user.username.trim();
-  return "사용자";
+  if (target.username?.trim()) return target.username.trim();
+  return "친구";
 }
 
 function Avatar({ name, url, size = 40 }: { name?: string | null; url?: string | null; size?: number }) {
@@ -698,21 +700,28 @@ function FriendList({
   }
   return (
     <ul className="divide-y divide-border">
-      {friends.map((f) => {
+      {friends.map((f: { id?: string; username?: string | null; display_name?: string | null; avatar_url?: string | null; email?: string | null; friend_id?: string; profile?: { id?: string; username?: string | null; display_name?: string | null; avatar_url?: string | null; email?: string | null } }) => {
         if (!f) return null;
-        const displayName = getUserDisplayName(f);
-        const username = f.username || (f.email ? (f.email || "").split("@")[0] : "사용자");
+        const profileObj = f.profile || f;
+        const displayName = getUserDisplayName(f) || "친구";
+        const rawEmail = (f?.email || f?.profile?.email || "user@test.com");
+        const safeEmailStr = typeof rawEmail === "string" ? rawEmail : "user@test.com";
+        const emailPrefix = safeEmailStr.split("@")[0] || "사용자";
+        const username = profileObj?.username || f?.username || emailPrefix || "사용자";
+        const avatarUrl = profileObj?.avatar_url || f?.avatar_url || null;
+        const friendId = f?.id || profileObj?.id || f?.friend_id;
+
         return (
-          <li key={f.id || Math.random().toString()} className="flex items-center gap-3 px-4 py-3">
-            <button onClick={() => onOpen(f)} className="flex flex-1 items-center gap-3 text-left">
-              <Avatar name={displayName} url={f.avatar_url} size={44} />
+          <li key={friendId || Math.random().toString()} className="flex items-center gap-3 px-4 py-3">
+            <button onClick={() => friendId && onOpen(profileObj as Profile)} className="flex flex-1 items-center gap-3 text-left">
+              <Avatar name={displayName} url={avatarUrl} size={44} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{displayName}</div>
                 <div className="truncate text-xs text-muted-foreground">@{username}</div>
               </div>
             </button>
             <button
-              onClick={() => f.id && onRemove(f.id)}
+              onClick={() => friendId && onRemove(friendId)}
               className="rounded-full p-2 text-muted-foreground hover:bg-secondary hover:text-destructive"
               title="친구 삭제"
             >
