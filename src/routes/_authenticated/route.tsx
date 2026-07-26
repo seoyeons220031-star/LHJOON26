@@ -59,8 +59,12 @@ function AuthedLayout() {
           const conv = convs.find((c) => c.id === m.conversation_id);
           if (conv?.muted) return;
 
+          const sender = conv?.participants?.find((p) => p && p.id === m.sender_id);
+          const senderEmailPrefix = sender?.email ? (sender.email || "").split("@")[0] : "";
           const senderName =
-            conv?.participants.find((p) => p.id === m.sender_id)?.display_name ??
+            sender?.display_name?.trim() ||
+            senderEmailPrefix ||
+            sender?.username ||
             (conv?.is_group ? (conv.title ?? "그룹") : "새 메시지");
           const preview = m.content?.trim()
             ? m.content

@@ -5,6 +5,7 @@ export type Profile = {
   username: string;
   display_name: string;
   avatar_url: string | null;
+  email?: string | null;
 };
 
 export type Message = {
@@ -46,28 +47,50 @@ export async function getMyProfile(): Promise<Profile | null> {
   const userId = await getAuthUserId();
   if (!userId) return null;
   const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-  return data;
+  if (!data) return null;
+  return sanitizeProfile(data);
+}
+
+function sanitizeProfile(p: { id?: string; username?: string | null; display_name?: string | null; avatar_url?: string | null; email?: string | null } | null | undefined): Profile {
+  if (!p) {
+    return {
+      id: "",
+      username: "사용자",
+      display_name: "사용자",
+      avatar_url: null,
+    };
+  }
+  const emailName = p.email ? (p.email || "").split("@")[0] || "사용자" : "";
+  const name = p.display_name?.trim() || emailName || p.username?.trim() || "사용자";
+  const username = p.username?.trim() || emailName || "사용자";
+  return {
+    id: p.id || "",
+    username,
+    display_name: name,
+    avatar_url: p.avatar_url || null,
+  };
 }
 
 export async function listFriends(): Promise<Profile[]> {
   const userId = await getAuthUserId();
   if (!userId) return [];
   const { data: f } = await supabase.from("friendships").select("friend_id").eq("user_id", userId);
-  const ids = (f ?? []).map((r) => r.friend_id);
+  const ids = (f ?? []).map((r) => r?.friend_id).filter(Boolean);
   if (ids.length === 0) return [];
   const { data: profs } = await supabase.from("profiles").select("*").in("id", ids);
-  return (profs ?? []) as Profile[];
+  return (profs ?? []).map(sanitizeProfile);
 }
 
-export async function searchUsers(q: string): Promise<Profile[]> {
-  const query = q.trim();
+export async function searchUsers(q: string | null | undefined): Promise<Profile[]> {
+  const query = (q || "").trim();
   if (!query) return [];
   const { data, error } = await supabase.rpc("search_users", { _q: query });
   if (error) throw error;
-  return (data ?? []) as Profile[];
+  return (data ?? []).map(sanitizeProfile);
 }
 
-export async function addFriendById(friendId: string): Promise<void> {
+export async function addFriendById(friendId: string | null | undefined): Promise<void> {
+  if (!friendId) throw new Error("유효하지 않은 친구 ID입니다.");
   const { error } = await supabase.rpc("add_friend", { _friend: friendId });
   if (error) throw error;
 }
@@ -94,11 +117,12 @@ export async function updateMyProfile(input: {
 export async function uploadAvatar(file: File): Promise<string> {
   const userId = await getAuthUserId();
   if (!userId) throw new Error("Not signed in");
-  const ext = (file.name.split(".").pop() || "png").toLowerCase();
+  const fileName = file?.name || "avatar.png";
+  const ext = (fileName.split(".").pop() || "png").toLowerCase();
   const path = `${userId}/avatar-${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from("avatars").upload(path, file, {
     upsert: true,
-    contentType: file.type || "image/png",
+    contentType: file?.type || "image/png",
   });
   if (error) throw error;
   const { data: signed, error: sErr } = await supabase.storage
@@ -108,9 +132,10 @@ export async function uploadAvatar(file: File): Promise<string> {
   return signed.signedUrl;
 }
 
-export async function addFriendByUsername(username: string): Promise<Profile> {
+export async function addFriendByUsername(username: string | null | undefined): Promise<Profile> {
   const userId = await getAuthUserId();
   if (!userId) throw new Error("Not signed in");
+  if (!username) throw new Error("사용자명을 입력해 주세요.");
   const clean = username.trim().replace(/^@/, "").toLowerCase();
   const { data: prof, error } = await supabase
     .from("profiles")
@@ -128,7 +153,7 @@ export async function addFriendByUsername(username: string): Promise<Profile> {
     { onConflict: "user_id,friend_id" },
   );
   if (e1) throw e1;
-  return prof as Profile;
+  return sanitizeProfile(prof);
 }
 
 export async function removeFriend(friendId: string) {
@@ -171,10 +196,10 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   const { data: profs } = otherIds.length
     ? await supabase.from("profiles").select("*").in("id", otherIds)
     : { data: [] as Profile[] };
-  const profMap = new Map((profs ?? []).map((p) => [p.id, p as Profile]));
+  const profMap = new Map((profs ?? []).map((p) => [p.id, sanitizeProfile(p)]));
 
   const { data: myProf } = await supabase.from("profiles").select("*").eq("id", me).maybeSingle();
-  if (myProf) profMap.set(me, myProf as Profile);
+  if (myProf) profMap.set(me, sanitizeProfile(myProf));
 
   const { data: recentMsgs } = await supabase
     .from("messages")
@@ -458,7 +483,7 @@ export async function getConversationDetail(conversationId: string) {
     ? await supabase.from("profiles").select("*").in("id", ids)
     : { data: [] as Profile[] };
 
-  const profMap = new Map((profs ?? []).map((p) => [p.id, p as Profile]));
+  const profMap = new Map((profs ?? []).map((p) => [p.id, sanitizeProfile(p)]));
 
   return {
     conversation: conv as {

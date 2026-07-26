@@ -71,8 +71,20 @@ type ScheduledMessage = {
   created_at: string;
 };
 
-function Avatar({ name, url, size = 32 }: { name: string; url?: string | null; size?: number }) {
-  const initials = name
+function getUserDisplayName(user?: { display_name?: string | null; username?: string | null; email?: string | null } | null): string {
+  if (!user) return "사용자";
+  if (user.display_name?.trim()) return user.display_name.trim();
+  if (user.email) {
+    const emailPrefix = (user.email || "").split("@")[0] || "사용자";
+    if (emailPrefix) return emailPrefix;
+  }
+  if (user.username?.trim()) return user.username.trim();
+  return "사용자";
+}
+
+function Avatar({ name, url, size = 32 }: { name?: string | null; url?: string | null; size?: number }) {
+  const safeName = (name || "").trim() || "사용자";
+  const initials = safeName
     .split(/\s+/)
     .map((s) => s[0])
     .filter(Boolean)
@@ -82,7 +94,7 @@ function Avatar({ name, url, size = 32 }: { name: string; url?: string | null; s
   return url ? (
     <img
       src={url}
-      alt={name}
+      alt={safeName}
       style={{ width: size, height: size, minWidth: size, minHeight: size }}
       className="block aspect-square shrink-0 rounded-full object-cover"
     />
@@ -91,7 +103,7 @@ function Avatar({ name, url, size = 32 }: { name: string; url?: string | null; s
       style={{ width: size, height: size, minWidth: size, minHeight: size, fontSize: size * 0.4 }}
       className="flex aspect-square shrink-0 items-center justify-center rounded-full bg-primary font-semibold text-primary-foreground"
     >
-      {initials || "?"}
+      {initials || "사용자"[0]}
     </div>
   );
 }
@@ -990,20 +1002,23 @@ function ChatRoom() {
     return () => clearInterval(timer);
   }, [id, me, scheduledMessages, saveScheduledMessages]);
 
+  const otherParticipants = participants.filter((p) => p && p.user_id !== me);
+  const firstOtherProf = otherParticipants[0]?.profile;
+
   const title = conv?.is_group
     ? conv.title ||
       participants
-        .filter((p) => p.user_id !== me)
-        .map((p) => p.profile?.display_name)
+        .filter((p) => p && p.user_id !== me)
+        .map((p) => getUserDisplayName(p.profile))
         .filter(Boolean)
         .slice(0, 3)
-        .join(", ")
-    : (participants.find((p) => p.user_id !== me)?.profile?.display_name ?? "Chat");
+        .join(", ") ||
+      "그룹 채팅"
+    : getUserDisplayName(firstOtherProf);
 
-  const otherParticipants = participants.filter((p) => p.user_id !== me);
   const subtitle = conv?.is_group
-    ? `${participants.length} members`
-    : `@${otherParticipants[0]?.profile?.username ?? ""}`;
+    ? `${participants.length}명의 대화 상대`
+    : `@${firstOtherProf?.username || (firstOtherProf?.email ? (firstOtherProf.email || "").split("@")[0] : "")}`;
 
   const unreadFor = (m: Message) => {
     if (m.sender_id !== me) return 0;
@@ -1070,7 +1085,7 @@ function ChatRoom() {
   };
 
   const typingUsers = Array.from(typing)
-    .map((uid) => profileMap.get(uid)?.display_name)
+    .map((uid) => getUserDisplayName(profileMap.get(uid)))
     .filter(Boolean) as string[];
 
   const filteredMessages = useMemo(() => {
@@ -1100,8 +1115,8 @@ function ChatRoom() {
             </div>
           ) : (
             <Avatar
-              name={otherParticipants[0]?.profile?.display_name ?? "?"}
-              url={otherParticipants[0]?.profile?.avatar_url}
+              name={getUserDisplayName(firstOtherProf)}
+              url={firstOtherProf?.avatar_url}
               size={36}
             />
           )}
