@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Loader2, UserCheck } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   component: AuthPage,
@@ -12,9 +13,11 @@ export const Route = createFileRoute("/auth")({
 // are hex-encoded so they fit RFC-valid local parts.
 const EMAIL_DOMAIN = "ripple.local";
 const toEmail = (username: string) => {
-  const isAscii = /^[a-z0-9_]+$/.test(username);
-  if (isAscii) return `${username}@${EMAIL_DOMAIN}`;
-  const bytes = new TextEncoder().encode(username);
+  const clean = username.trim().toLowerCase();
+  if (clean.includes("@")) return clean;
+  const isAscii = /^[a-z0-9_]+$/.test(clean);
+  if (isAscii) return `${clean}@${EMAIL_DOMAIN}`;
+  const bytes = new TextEncoder().encode(clean);
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `u_${hex}@${EMAIL_DOMAIN}`;
 };
@@ -47,38 +50,99 @@ function AuthPage() {
     return null;
   }
 
+  const handleDemoLogin = async () => {
+    setLoading(true);
+    try {
+      const demoEmail = `demo_user@${EMAIL_DOMAIN}`;
+      const demoPw = "demo1234_stretch";
+      
+      const { error } = await supabase.auth.signInWithPassword({
+        email: demoEmail,
+        password: demoPw,
+      });
+
+      if (error) {
+        // Create demo user if doesn't exist
+        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          email: demoEmail,
+          password: demoPw,
+          options: {
+            data: {
+              display_name: "시범 사용자",
+              username: "demouser",
+              name: "시범 사용자",
+            },
+          },
+        });
+        if (signUpErr) throw signUpErr;
+        if (signUpData?.user?.id) {
+          await supabase.from("profiles").upsert(
+            {
+              id: signUpData.user.id,
+              username: "demouser",
+              display_name: "시범 사용자",
+            },
+            { onConflict: "id" }
+          );
+        }
+      }
+
+      toast.success("시범 계정으로 로그인했습니다.");
+      navigate({ to: "/chats", replace: true });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "시범 로그인 실패");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const uname = normalizeUsername(username);
-    const len = usernameLength(uname);
-    if (len < 2 || len > 20 || !USERNAME_RE.test(uname)) {
-      toast.error("ID는 2~20자의 한글, 영문 소문자, 숫자, _ 만 가능해요.");
+    const rawInput = username.trim();
+    if (!rawInput) {
+      toast.error("ID 또는 이메일을 입력해 주세요.");
       return;
     }
     if (password.length < 4) {
       toast.error("비밀번호는 4자 이상이어야 해요.");
       return;
     }
+
+    const isEmailInput = rawInput.includes("@");
+    const uname = normalizeUsername(rawInput);
+
+    if (!isEmailInput) {
+      const len = usernameLength(uname);
+      if (len < 2 || len > 20 || !USERNAME_RE.test(uname)) {
+        toast.error("ID는 2~20자의 한글, 영문 소문자, 숫자, _ 만 가능해요.");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
-      if (mode === "signup") {
-        // Check that username isn't taken to avoid the trigger silently appending a counter.
-        const { data: existing, error: chkErr } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("username", uname)
-          .maybeSingle();
-        if (chkErr) throw chkErr;
-        if (existing) throw new Error("이미 사용 중인 ID예요.");
+      const targetEmail = isEmailInput ? rawInput : toEmail(uname);
+      const targetPassword = stretchPassword(password);
 
-        const nameToUse = displayName.trim() || uname;
+      if (mode === "signup") {
+        if (!isEmailInput) {
+          const { data: existing, error: chkErr } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("username", uname)
+            .maybeSingle();
+          if (chkErr) throw chkErr;
+          if (existing) throw new Error("이미 사용 중인 ID예요.");
+        }
+
+        const nameToUse = displayName.trim() || (isEmailInput ? rawInput.split("@")[0] : uname);
         const { data: signUpData, error } = await supabase.auth.signUp({
-          email: toEmail(uname),
-          password: stretchPassword(password),
+          email: targetEmail,
+          password: targetPassword,
           options: {
             data: {
               display_name: nameToUse,
-              username: uname,
+              username: isEmailInput ? rawInput.split("@")[0] : uname,
               name: nameToUse,
             },
           },
@@ -90,7 +154,7 @@ function AuthPage() {
           await supabase.from("profiles").upsert(
             {
               id: userId,
-              username: uname,
+              username: isEmailInput ? rawInput.split("@")[0] : uname,
               display_name: nameToUse,
             },
             { onConflict: "id" }
@@ -98,11 +162,29 @@ function AuthPage() {
         }
         toast.success("가입 완료! 로그인되었어요.");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: toEmail(uname),
-          password: stretchPassword(password),
+        let res = await supabase.auth.signInWithPassword({
+          email: targetEmail,
+          password: targetPassword,
         });
-        if (error) throw new Error("ID 또는 비밀번호가 올바르지 않아요.");
+
+        if (res.error && password.length >= 6) {
+          const res2 = await supabase.auth.signInWithPassword({
+            email: targetEmail,
+            password: password,
+          });
+          if (!res2.error) res = res2;
+        }
+
+        if (res.error && isEmailInput) {
+          const res3 = await supabase.auth.signInWithPassword({
+            email: toEmail(rawInput.split("@")[0]),
+            password: targetPassword,
+          });
+          if (!res3.error) res = res3;
+        }
+
+        if (res.error) throw new Error("ID 또는 비밀번호가 올바르지 않아요.");
+        toast.success("로그인에 성공했습니다.");
       }
       navigate({ to: "/chats", replace: true });
     } catch (err) {
@@ -128,12 +210,14 @@ function AuthPage() {
         <div className="rounded-3xl bg-card p-6 shadow-sm">
           <div className="mb-5 flex rounded-full bg-secondary p-1">
             <button
+              type="button"
               onClick={() => setMode("signin")}
               className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${mode === "signin" ? "bg-card shadow-sm" : "text-muted-foreground"}`}
             >
               로그인
             </button>
             <button
+              type="button"
               onClick={() => setMode("signup")}
               className={`flex-1 rounded-full py-1.5 text-sm font-medium transition ${mode === "signup" ? "bg-card shadow-sm" : "text-muted-foreground"}`}
             >
@@ -158,7 +242,7 @@ function AuthPage() {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="ID (한글/영문 소문자/숫자/_, 2~20자)"
+              placeholder="ID 또는 이메일"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
@@ -175,13 +259,27 @@ function AuthPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
             >
-              {loading ? "잠시만요..." : mode === "signin" ? "로그인" : "가입하기"}
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {loading ? "처리 중..." : mode === "signin" ? "로그인" : "가입하기"}
             </button>
           </form>
+
+          <div className="mt-4 border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={handleDemoLogin}
+              disabled={loading}
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-border bg-secondary/50 py-2 text-xs font-semibold text-foreground transition hover:bg-secondary disabled:opacity-60"
+            >
+              <UserCheck className="h-3.5 w-3.5 text-primary" />
+              시범 계정으로 즉시 시작하기
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+

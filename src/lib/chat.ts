@@ -399,13 +399,13 @@ export async function renameConversation(conversationId: string, title: string) 
   // 1. Store in local custom chat name map for client persistence
   setCustomChatName(conversationId, clean);
 
-  // 2. Update Supabase conversations table (only valid 'title' column)
-  const { error } = await supabase
-    .from("conversations")
-    .update({ title: clean || null })
-    .eq("id", conversationId);
-
-  if (error) {
+  // 2. Update Supabase conversations table (both name and title)
+  try {
+    await supabase
+      .from("conversations")
+      .update({ name: clean || null, title: clean || null } as unknown as { name: string | null; title: string | null })
+      .eq("id", conversationId);
+  } catch (error) {
     console.warn("Supabase conversation title update warning:", error);
   }
 }

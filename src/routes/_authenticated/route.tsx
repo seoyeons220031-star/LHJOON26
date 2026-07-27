@@ -72,96 +72,99 @@ function AuthedLayout() {
       meId = data.user?.id ?? null;
     });
 
-    const channel = supabase
-      .channel("global-notifications")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
-        async (payload) => {
-          const m = payload.new as Message;
-          if (!meId) {
-            const { data } = await supabase.auth.getUser();
-            meId = data.user?.id ?? null;
-          }
-          if (meId && m.sender_id === meId) return;
-          if (m.conversation_id === getActiveConversation()) return;
+    const showToastWithSound = async (m: Message) => {
+      if (!meId) {
+        const { data } = await supabase.auth.getUser();
+        meId = data.user?.id ?? null;
+      }
+      if (meId && m.sender_id === meId) return;
 
-          // Look up conversation metadata from cache first
-          let convs = qc.getQueryData<ConversationSummary[]>(["conversations"]);
-          if (!convs) {
-            try {
-              convs = await listConversations();
-              qc.setQueryData(["conversations"], convs);
-            } catch {
-              convs = [];
-            }
-          }
-          const conv = convs.find((c) => c.id === m.conversation_id);
-          if (conv?.muted) return;
+      // Look up conversation metadata from cache first
+      let convs = qc.getQueryData<ConversationSummary[]>(["conversations"]);
+      if (!convs) {
+        try {
+          convs = await listConversations();
+          qc.setQueryData(["conversations"], convs);
+        } catch {
+          convs = [];
+        }
+      }
+      const conv = convs.find((c) => c.id === m.conversation_id);
+      if (conv?.muted) return;
 
-          const sender = conv?.participants?.find((p) => p && p.id === m.sender_id);
-          const senderEmailPrefix = sender?.email ? (sender.email || "").split("@")[0] : "";
-          const senderName =
-            sender?.display_name?.trim() ||
-            senderEmailPrefix ||
-            sender?.username ||
-            (conv ? getConversationTitle(conv) : "새 메시지");
-          const preview = m.content?.trim()
-            ? m.content
-            : m.attachment_type?.startsWith("image/")
-              ? "📷 사진"
-              : m.attachment_type?.startsWith("video/")
-                ? "🎬 동영상"
-                : m.attachment_name
-                  ? `📎 ${m.attachment_name}`
-                  : "새 메시지";
+      const sender = conv?.participants?.find((p) => p && p.id === m.sender_id);
+      const senderEmailPrefix = sender?.email ? (sender.email || "").split("@")[0] : "";
+      const senderName =
+        sender?.display_name?.trim() ||
+        senderEmailPrefix ||
+        sender?.username ||
+        (conv ? getConversationTitle(conv) : "상대방");
+      const preview = m.content?.trim()
+        ? m.content
+        : m.attachment_type?.startsWith("image/")
+          ? "📷 사진"
+          : m.attachment_type?.startsWith("video/")
+            ? "🎬 동영상"
+            : m.attachment_name
+              ? `📎 ${m.attachment_name}`
+              : "새 메시지가 도착했습니다.";
 
-          // Play notification chime
-          playNotificationSound();
+      // Play notification chime
+      playNotificationSound();
 
-          // Show floating Toast banner
-          toast(senderName, {
-            description: preview,
-            action: {
-              label: "열기",
-              onClick: () => navigate({ to: "/chat/$id", params: { id: m.conversation_id } }),
-            },
-          });
+      // Show floating Toast banner
+      toast(senderName, {
+        description: preview,
+        action: {
+          label: "열기",
+          onClick: () => navigate({ to: "/chat/$id", params: { id: m.conversation_id } }),
+        },
+      });
 
-          // System Notification (Web Push Notification standard) at OS level
-          if (
-            typeof window !== "undefined" &&
-            "Notification" in window &&
-            Notification.permission === "granted"
-          ) {
-            if ("serviceWorker" in navigator) {
-              navigator.serviceWorker.ready
-                .then((registration) => {
-                  registration.showNotification(senderName, {
-                    body: preview,
-                    icon: "/lhjoon-logo.png",
-                    badge: "/favicon.png",
-                    vibrate: [200, 100, 200],
-                    tag: m.conversation_id,
-                    data: {
-                      url: `/chat/${m.conversation_id}`,
-                    },
-                  });
-                })
-                .catch((e) => {
-                  console.error("[SW Notification Error]", e);
-                });
-            } else {
-              new Notification(senderName, {
+      // System Notification (Web Push Notification standard) at OS level
+      if (
+        typeof window !== "undefined" &&
+        "Notification" in window &&
+        Notification.permission === "granted"
+      ) {
+        try {
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.ready.then((registration) => {
+              registration.showNotification(senderName, {
                 body: preview,
                 icon: "/lhjoon-logo.png",
                 badge: "/favicon.png",
                 vibrate: [200, 100, 200],
+                tag: m.conversation_id,
+                data: { url: `/chat/${m.conversation_id}` },
               });
-            }
+            });
+          } else {
+            new Notification(senderName, {
+              body: preview,
+              icon: "/lhjoon-logo.png",
+              badge: "/favicon.png",
+              vibrate: [200, 100, 200],
+            });
           }
+        } catch (e) {
+          console.warn("System notification error:", e);
+        }
+      }
 
-          qc.invalidateQueries({ queryKey: ["conversations"] });
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+    };
+
+    const channel = supabase
+      .channel("notification-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as Message;
+          if (msg && msg.sender_id !== meId) {
+            showToastWithSound(msg);
+          }
         },
       )
       .on(
