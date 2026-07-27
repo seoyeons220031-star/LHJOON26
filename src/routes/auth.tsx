@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, UserCheck } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   component: AuthPage,
@@ -49,52 +49,6 @@ function AuthPage() {
   if (!mounted) {
     return null;
   }
-
-  const handleDemoLogin = async () => {
-    setLoading(true);
-    try {
-      const demoEmail = `demo_user@${EMAIL_DOMAIN}`;
-      const demoPw = "demo1234_stretch";
-      
-      const { error } = await supabase.auth.signInWithPassword({
-        email: demoEmail,
-        password: demoPw,
-      });
-
-      if (error) {
-        // Create demo user if doesn't exist
-        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-          email: demoEmail,
-          password: demoPw,
-          options: {
-            data: {
-              display_name: "시범 사용자",
-              username: "demouser",
-              name: "시범 사용자",
-            },
-          },
-        });
-        if (signUpErr) throw signUpErr;
-        if (signUpData?.user?.id) {
-          await supabase.from("profiles").upsert(
-            {
-              id: signUpData.user.id,
-              username: "demouser",
-              display_name: "시범 사용자",
-            },
-            { onConflict: "id" }
-          );
-        }
-      }
-
-      toast.success("시범 계정으로 로그인했습니다.");
-      navigate({ to: "/chats", replace: true });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "시범 로그인 실패");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,18 +219,6 @@ function AuthPage() {
               {loading ? "처리 중..." : mode === "signin" ? "로그인" : "가입하기"}
             </button>
           </form>
-
-          <div className="mt-4 border-t border-border pt-4">
-            <button
-              type="button"
-              onClick={handleDemoLogin}
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-full border border-border bg-secondary/50 py-2 text-xs font-semibold text-foreground transition hover:bg-secondary disabled:opacity-60"
-            >
-              <UserCheck className="h-3.5 w-3.5 text-primary" />
-              시범 계정으로 즉시 시작하기
-            </button>
-          </div>
         </div>
       </div>
     </div>

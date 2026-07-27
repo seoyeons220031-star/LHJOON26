@@ -7,16 +7,79 @@ import { getActiveConversation } from "@/lib/active-conversation";
 import type { ConversationSummary, Message } from "@/lib/chat";
 import { listConversations, getConversationTitle } from "@/lib/chat";
 
-function playNotificationSound() {
+let sharedAudioCtx: AudioContext | null = null;
+let isAudioUnlocked = false;
+
+function unlockAudio() {
+  if (isAudioUnlocked && sharedAudioCtx && sharedAudioCtx.state === "running") return;
   try {
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+
+    if (!sharedAudioCtx) {
+      sharedAudioCtx = new AudioCtx();
+    }
+
+    if (sharedAudioCtx.state === "suspended") {
+      sharedAudioCtx.resume().then(() => {
+        isAudioUnlocked = true;
+      }).catch(() => {});
+    } else {
+      isAudioUnlocked = true;
+    }
+
+    // Play ultra-short silent sound to warm up mobile audio buffer
+    const buffer = sharedAudioCtx.createBuffer(1, 1, 22050);
+    const source = sharedAudioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(sharedAudioCtx.destination);
+    source.start(0);
+  } catch (e) {
+    console.warn("Audio unlock failed:", e);
+  }
+}
+
+// Global user interaction listener to unlock audio & ask notification permissions on mobile/pad
+if (typeof window !== "undefined") {
+  const unlockEvents = ["touchstart", "touchend", "click", "pointerdown", "keydown"];
+  const handleUserInteraction = () => {
+    unlockAudio();
+    if ("Notification" in window && Notification.permission === "default") {
+      try {
+        Notification.requestPermission().catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+  };
+  unlockEvents.forEach((ev) => {
+    window.addEventListener(ev, handleUserInteraction, { passive: true });
+  });
+}
+
+function playNotificationSound() {
+  // 1. Mobile Vibration (if supported by mobile/tablet OS)
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    try {
+      navigator.vibrate([150, 80, 150]);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Clear Chime sound via Web Audio API
+  try {
+    unlockAudio();
+    const ctx = sharedAudioCtx;
+    if (!ctx) return;
+
     if (ctx.state === "suspended") {
       ctx.resume().catch(() => {});
     }
+
+    const now = ctx.currentTime;
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -24,21 +87,21 @@ function playNotificationSound() {
     osc1.type = "sine";
     osc2.type = "sine";
 
-    const now = ctx.currentTime;
-    osc1.frequency.setValueAtTime(880, now);
-    osc2.frequency.setValueAtTime(1318.51, now + 0.08);
+    // Clear dual tone chime (C6 -> G6)
+    osc1.frequency.setValueAtTime(1046.5, now);
+    osc2.frequency.setValueAtTime(1567.98, now + 0.08);
 
-    gain.gain.setValueAtTime(0.15, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
 
     osc1.connect(gain);
     osc2.connect(gain);
     gain.connect(ctx.destination);
 
     osc1.start(now);
-    osc1.stop(now + 0.15);
+    osc1.stop(now + 0.12);
     osc2.start(now + 0.08);
-    osc2.stop(now + 0.35);
+    osc2.stop(now + 0.4);
   } catch (e) {
     console.warn("Notification sound error:", e);
   }
