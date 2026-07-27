@@ -348,11 +348,31 @@ function ChatRoom() {
       return old.map((c) => (c.id === id ? { ...c, unread_count: 0 } : c));
     });
 
+    const cachedConvs = qc.getQueryData<ConversationSummary[]>(["conversations"]);
+    const cached = cachedConvs?.find((c) => c.id === id);
+    if (cached) {
+      setConv({
+        is_group: cached.is_group,
+        name: cached.name,
+        title: cached.title,
+        pinned_message_id: cached.pinned_message_id ?? null,
+        theme_slug: "mint",
+      });
+      setMuted(cached.muted);
+      if (cached.last_message) {
+        setMessages((prev) => (prev.length === 0 ? [cached.last_message!] : prev));
+      }
+      setLoading(false);
+    }
+
     let alive = true;
     (async () => {
-      setLoading(true);
+      if (!cached) setLoading(true);
       try {
-        const detail = await getConversationDetail(id);
+        const [detail, msgs] = await Promise.all([
+          getConversationDetail(id),
+          loadMessages(id),
+        ]);
         if (!alive) return;
         setMe(detail.me);
         setConv({
@@ -371,19 +391,25 @@ function ChatRoom() {
         );
         setParticipants(mappedParticipants);
 
-        const msgs = await loadMessages(id);
-        if (!alive) return;
         setMessages(msgs);
         if (detail.conversation.pinned_message_id) {
           const pm = msgs.find((m) => m.id === detail.conversation.pinned_message_id);
-          setPinnedMsg(pm ?? (await getMessageById(detail.conversation.pinned_message_id)));
+          if (pm) {
+            setPinnedMsg(pm);
+          } else {
+            getMessageById(detail.conversation.pinned_message_id).then((p) => {
+              if (alive && p) setPinnedMsg(p);
+            });
+          }
         }
 
         // Mark conversation read
         void markConversationRead(id);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to load chat");
-        navigate({ to: "/chats" });
+        if (!cached) {
+          toast.error(e instanceof Error ? e.message : "채팅을 불러오지 못했습니다.");
+          navigate({ to: "/chats" });
+        }
       } finally {
         if (alive) setLoading(false);
       }

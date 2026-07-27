@@ -42,8 +42,25 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) navigate({ to: "/chats", replace: true });
+      if (data.user) {
+        navigate({ to: "/chats", replace: true });
+      }
     });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user || event === "SIGNED_IN") {
+        navigate({ to: "/chats", replace: true });
+        if (typeof window !== "undefined" && window.location.pathname === "/auth") {
+          window.location.href = "/chats";
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [navigate]);
 
   if (!mounted) {
@@ -141,6 +158,9 @@ function AuthPage() {
         toast.success("로그인에 성공했습니다.");
       }
       navigate({ to: "/chats", replace: true });
+      if (typeof window !== "undefined") {
+        window.location.href = "/chats";
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "문제가 발생했어요.");
     } finally {

@@ -38,10 +38,10 @@ export type ConversationSummary = {
 };
 
 export async function getAuthUserId(): Promise<string | null> {
-  const { data: u } = await supabase.auth.getUser();
-  if (u.user?.id) return u.user.id;
   const { data: s } = await supabase.auth.getSession();
-  return s.session?.user?.id ?? null;
+  if (s.session?.user?.id) return s.session.user.id;
+  const { data: u } = await supabase.auth.getUser();
+  return u.user?.id ?? null;
 }
 
 export async function getMyProfile(): Promise<Profile | null> {
@@ -575,28 +575,20 @@ export async function getSignedChatFileUrl(path: string): Promise<string> {
 }
 
 export async function getConversationDetail(conversationId: string) {
-  const { data: u } = await supabase.auth.getUser();
-  let me = u.user?.id;
-  if (!me) {
-    const { data: s } = await supabase.auth.getSession();
-    me = s.session?.user?.id;
-  }
+  const me = await getAuthUserId();
   if (!me) throw new Error("Not signed in");
 
-  const { data: conv, error } = await supabase
-    .from("conversations")
-    .select("*")
-    .eq("id", conversationId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!conv) throw new Error("Conversation not found");
+  const [convRes, partsRes] = await Promise.all([
+    supabase.from("conversations").select("*").eq("id", conversationId).maybeSingle(),
+    supabase.from("conversation_participants").select("user_id, last_read_at, muted").eq("conversation_id", conversationId),
+  ]);
 
-  const { data: parts } = await supabase
-    .from("conversation_participants")
-    .select("user_id, last_read_at, muted")
-    .eq("conversation_id", conversationId);
+  if (convRes.error) throw convRes.error;
+  if (!convRes.data) throw new Error("Conversation not found");
+  const conv = convRes.data;
+  const parts = partsRes.data ?? [];
 
-  const ids = (parts ?? []).map((p) => p.user_id);
+  const ids = parts.map((p) => p.user_id);
   const { data: profs } = ids.length
     ? await supabase.from("profiles").select("*").in("id", ids)
     : { data: [] as Profile[] };
@@ -614,8 +606,8 @@ export async function getConversationDetail(conversationId: string) {
       created_at: (conv as { created_at?: string }).created_at ?? null,
     },
     me,
-    myMuted: Boolean((parts ?? []).find((p) => p.user_id === me)?.muted),
-    participants: (parts ?? []).map((p) => ({
+    myMuted: Boolean(parts.find((p) => p.user_id === me)?.muted),
+    participants: parts.map((p) => ({
       user_id: p.user_id,
       last_read_at: p.last_read_at,
       profile: profMap.get(p.user_id) ?? null,
