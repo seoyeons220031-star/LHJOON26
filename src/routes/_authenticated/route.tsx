@@ -7,6 +7,43 @@ import { getActiveConversation } from "@/lib/active-conversation";
 import type { ConversationSummary, Message } from "@/lib/chat";
 import { listConversations, getConversationTitle } from "@/lib/chat";
 
+function playNotificationSound() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc1.type = "sine";
+    osc2.type = "sine";
+
+    const now = ctx.currentTime;
+    osc1.frequency.setValueAtTime(880, now);
+    osc2.frequency.setValueAtTime(1318.51, now + 0.08);
+
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc1.start(now);
+    osc1.stop(now + 0.15);
+    osc2.start(now + 0.08);
+    osc2.stop(now + 0.35);
+  } catch (e) {
+    console.warn("Notification sound error:", e);
+  }
+}
+
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
     if (typeof window === "undefined") {
@@ -28,8 +65,7 @@ function AuthedLayout() {
     setMounted(true);
   }, []);
 
-  // Global in-app push notifications for new messages in any conversation
-  // the user participates in. RLS ensures we only receive messages we can see.
+  // Global in-app push notifications for new messages & friend updates
   useEffect(() => {
     let meId: string | null = null;
     supabase.auth.getUser().then(({ data }) => {
@@ -43,10 +79,14 @@ function AuthedLayout() {
         { event: "INSERT", schema: "public", table: "messages" },
         async (payload) => {
           const m = payload.new as Message;
-          if (!meId || m.sender_id === meId) return;
+          if (!meId) {
+            const { data } = await supabase.auth.getUser();
+            meId = data.user?.id ?? null;
+          }
+          if (meId && m.sender_id === meId) return;
           if (m.conversation_id === getActiveConversation()) return;
 
-          // Look up conversation metadata (mute + title) from cache first
+          // Look up conversation metadata from cache first
           let convs = qc.getQueryData<ConversationSummary[]>(["conversations"]);
           if (!convs) {
             try {
@@ -76,6 +116,10 @@ function AuthedLayout() {
                   ? `📎 ${m.attachment_name}`
                   : "새 메시지";
 
+          // Play notification chime
+          playNotificationSound();
+
+          // Show floating Toast banner
           toast(senderName, {
             description: preview,
             action: {
@@ -84,7 +128,7 @@ function AuthedLayout() {
             },
           });
 
-          // Trigger real system notification (Web Push Notification standard) at OS level
+          // System Notification (Web Push Notification standard) at OS level
           if (
             typeof window !== "undefined" &&
             "Notification" in window &&
@@ -98,7 +142,7 @@ function AuthedLayout() {
                     icon: "/lhjoon-logo.png",
                     badge: "/favicon.png",
                     vibrate: [200, 100, 200],
-                    tag: m.conversation_id, // Debounces alerts from the same chat room
+                    tag: m.conversation_id,
                     data: {
                       url: `/chat/${m.conversation_id}`,
                     },
@@ -118,6 +162,33 @@ function AuthedLayout() {
           }
 
           qc.invalidateQueries({ queryKey: ["conversations"] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships" },
+        async (payload) => {
+          qc.invalidateQueries({ queryKey: ["friends"] });
+          qc.invalidateQueries({ queryKey: ["conversations"] });
+
+          const newRow = payload.new as { user_id?: string; friend_id?: string; status?: string } | null;
+          if (!meId) {
+            const { data } = await supabase.auth.getUser();
+            meId = data.user?.id ?? null;
+          }
+
+          if (newRow && meId && (newRow.friend_id === meId || newRow.user_id === meId)) {
+            playNotificationSound();
+            if (payload.eventType === "INSERT") {
+              toast("새 친구 소식", {
+                description: "친구 요청 또는 새로운 친구가 추가되었습니다.",
+              });
+            } else if (payload.eventType === "UPDATE") {
+              toast("친구 정보 업데이트", {
+                description: "친구 목록 상태가 업데이트되었습니다.",
+              });
+            }
+          }
         },
       )
       .subscribe();

@@ -91,8 +91,37 @@ export function getUserDisplayName(user?: { display_name?: string | null; userna
   return "상대방";
 }
 
+export function getCustomChatName(conversationId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("custom_chat_names");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed[conversationId] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCustomChatName(conversationId: string, name: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem("custom_chat_names");
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (name.trim()) {
+      parsed[conversationId] = name.trim();
+    } else {
+      delete parsed[conversationId];
+    }
+    localStorage.setItem("custom_chat_names", JSON.stringify(parsed));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export function getConversationTitle(
   conv?: {
+    id?: string;
     is_group?: boolean;
     name?: string | null;
     title?: string | null;
@@ -102,7 +131,12 @@ export function getConversationTitle(
 ): string {
   if (!conv) return "채팅방";
 
-  const explicitName = (conv.name || conv.title || "").trim();
+  if (conv.id) {
+    const localCustom = getCustomChatName(conv.id);
+    if (localCustom) return localCustom;
+  }
+
+  const explicitName = (conv.title || conv.name || "").trim();
 
   if (conv.is_group) {
     if (explicitName) return explicitName;
@@ -327,10 +361,10 @@ export async function createGroupConversation(title: string, memberIds: string[]
   try {
     await supabase
       .from("conversations")
-      .update({ title: cleanTitle, name: cleanTitle } as unknown as { title: string })
+      .update({ title: cleanTitle })
       .eq("id", convId);
   } catch {
-    // Ignore if column is missing
+    // Ignore update error
   }
 
   return convId;
@@ -361,11 +395,19 @@ export async function leaveConversation(conversationId: string) {
 
 export async function renameConversation(conversationId: string, title: string) {
   const clean = title.trim().slice(0, 60);
+
+  // 1. Store in local custom chat name map for client persistence
+  setCustomChatName(conversationId, clean);
+
+  // 2. Update Supabase conversations table (only valid 'title' column)
   const { error } = await supabase
     .from("conversations")
-    .update({ title: clean || null, name: clean || null } as unknown as { title: string | null })
+    .update({ title: clean || null })
     .eq("id", conversationId);
-  if (error) throw error;
+
+  if (error) {
+    console.warn("Supabase conversation title update warning:", error);
+  }
 }
 
 export async function markConversationRead(conversationId: string) {

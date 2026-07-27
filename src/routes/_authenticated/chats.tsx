@@ -5,6 +5,7 @@ import {
   addFriendById,
   createGroupConversation,
   getConversationTitle,
+  getCustomChatName,
   getMyProfile,
   getUserDisplayName,
   leaveConversation,
@@ -12,6 +13,7 @@ import {
   listFriends,
   openDirectConversation,
   removeFriend,
+  renameConversation,
   searchUsers,
   updateMyProfile,
   uploadAvatar,
@@ -33,6 +35,7 @@ import {
   Loader2,
   MoreHorizontal,
   Bell,
+  Pencil,
   BellOff,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -122,6 +125,31 @@ function ChatsHome() {
   };
 
   const [leaveTarget, setLeaveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  const handleOpenRename = (id: string, name: string) => {
+    const current = getCustomChatName(id) || name || "";
+    setRenameTarget({ id, name });
+    setRenameInput(current);
+  };
+
+  const handleSaveRename = async () => {
+    if (!renameTarget || isRenaming) return;
+    setIsRenaming(true);
+    try {
+      const clean = renameInput.trim();
+      await renameConversation(renameTarget.id, clean);
+      await qc.invalidateQueries({ queryKey: ["conversations"] });
+      toast.success("채팅방 이름이 변경되었습니다.");
+      setRenameTarget(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "변경 실패");
+    } finally {
+      setIsRenaming(false);
+    }
+  };
 
   const confirmLeaveConversation = async () => {
     if (!leaveTarget) return;
@@ -308,6 +336,7 @@ function ChatsHome() {
               loading={convsQ.isLoading}
               onNewGroup={() => setShowNewGroup(true)}
               onLeave={handleLeaveConversation}
+              onRename={(id, currentName) => handleOpenRename(id, currentName)}
             />
           </>
         )}
@@ -355,6 +384,61 @@ function ChatsHome() {
             navigate({ to: "/chat/$id", params: { id } });
           }}
         />
+      )}
+
+      {renameTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xs sm:max-w-sm rounded-2xl border border-border bg-popover p-5 shadow-2xl text-foreground animate-in zoom-in-95 duration-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Pencil className="h-4 w-4 text-primary" />
+                <h3 className="font-bold text-base">채팅방 이름 변경</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRenameTarget(null)}
+                className="rounded-full p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">새 채팅방 이름</label>
+              <input
+                type="text"
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSaveRename();
+                  }
+                }}
+                placeholder="채팅방 이름을 입력하세요"
+                className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-medium"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setRenameTarget(null)}
+                className="rounded-xl border border-border px-4 py-2 text-xs font-semibold hover:bg-secondary transition text-muted-foreground"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={isRenaming}
+                onClick={handleSaveRename}
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+              >
+                {isRenaming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {leaveTarget && (
@@ -512,11 +596,13 @@ function ChatList({
   loading,
   onNewGroup,
   onLeave,
+  onRename,
 }: {
   data: Awaited<ReturnType<typeof listConversations>>;
   loading: boolean;
   onNewGroup: () => void;
   onLeave: (id: string, name: string) => void;
+  onRename?: (id: string, name: string) => void;
 }) {
   const [menuId, setMenuId] = useState<string | null>(null);
   useEffect(() => {
@@ -609,6 +695,17 @@ function ChatList({
                 onClick={(e) => e.stopPropagation()}
                 className="absolute right-2 top-14 z-20 w-40 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
               >
+                {onRename && (
+                  <button
+                    onClick={() => {
+                      setMenuId(null);
+                      onRename(c.id, name);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-foreground hover:bg-secondary border-b border-border"
+                  >
+                    <Pencil className="h-4 w-4 text-muted-foreground" /> 이름 변경
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setMenuId(null);

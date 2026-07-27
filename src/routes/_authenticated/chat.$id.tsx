@@ -7,6 +7,7 @@ import {
   editMessage,
   getConversationDetail,
   getConversationTitle,
+  getCustomChatName,
   getMessageById,
   getUserDisplayName,
   leaveConversation,
@@ -37,6 +38,7 @@ import {
   Download,
   FileText,
   FolderOpen,
+  Loader2,
   LogOut,
   MoreHorizontal,
   Palette,
@@ -190,6 +192,9 @@ function ChatRoom() {
   const [loading, setLoading] = useState(true);
 
   const [showThemeModal, setShowThemeModal] = useState(false);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renameInput, setRenameInput] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<Message | null>(null);
   const [leaveRoomConfirmOpen, setLeaveRoomConfirmOpen] = useState(false);
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>(() => {
@@ -870,17 +875,27 @@ function ChatRoom() {
     }
   };
 
-  const handleRename = async () => {
+  const openRenameModal = () => {
     setShowMore(false);
-    const current = conv?.name || conv?.title || "";
-    const next = prompt("채팅방 이름을 입력하세요", current);
-    if (next === null) return;
+    const current = getCustomChatName(id) || conv?.name || conv?.title || "";
+    setRenameInput(current);
+    setIsRenameModalOpen(true);
+  };
+
+  const handleSaveRename = async () => {
+    if (isRenaming) return;
+    setIsRenaming(true);
     try {
-      await renameConversation(id, next);
-      setConv((prev) => (prev ? { ...prev, name: next.trim() || null, title: next.trim() || null } : prev));
-      toast.success("채팅방 이름을 변경했어요.");
+      const clean = renameInput.trim();
+      await renameConversation(id, clean);
+      setConv((prev) => (prev ? { ...prev, name: clean || null, title: clean || null } : prev));
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+      toast.success("채팅방 이름이 변경되었습니다.");
+      setIsRenameModalOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "변경 실패");
+    } finally {
+      setIsRenaming(false);
     }
   };
 
@@ -1182,7 +1197,7 @@ function ChatRoom() {
                   )}
                 </button>
                 <button
-                  onClick={handleRename}
+                  onClick={openRenameModal}
                   className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-foreground hover:bg-secondary transition"
                 >
                   <Pencil className="h-4 w-4 text-foreground" />
@@ -2076,6 +2091,61 @@ function ChatRoom() {
       )}
 
       {/* Custom Theme Selector Modal */}
+      {isRenameModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xs sm:max-w-sm rounded-2xl border border-border bg-popover p-5 shadow-2xl text-foreground animate-in zoom-in-95 duration-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Pencil className="h-4 w-4 text-primary" />
+                <h3 className="font-bold text-base">채팅방 이름 변경</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRenameModalOpen(false)}
+                className="rounded-full p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground">새 채팅방 이름</label>
+              <input
+                type="text"
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSaveRename();
+                  }
+                }}
+                placeholder="채팅방 이름을 입력하세요"
+                className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-medium"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsRenameModalOpen(false)}
+                className="rounded-xl border border-border px-4 py-2 text-xs font-semibold hover:bg-secondary transition text-muted-foreground"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={isRenaming}
+                onClick={handleSaveRename}
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+              >
+                {isRenaming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showThemeModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-popover p-5 shadow-2xl text-foreground animate-in zoom-in-95 duration-200">
