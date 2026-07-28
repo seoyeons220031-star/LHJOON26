@@ -126,7 +126,20 @@ function AuthedLayout() {
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    // Invalidate conversation queries on layout mount to ensure full sync on login
+    qc.invalidateQueries({ queryKey: ["conversations"] });
+    qc.invalidateQueries({ queryKey: ["me"] });
+    qc.invalidateQueries({ queryKey: ["friends"] });
+
+    // Request Notification permission if default
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      try {
+        Notification.requestPermission().catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+  }, [qc]);
 
   // Global in-app push notifications for new messages & friend updates
   useEffect(() => {

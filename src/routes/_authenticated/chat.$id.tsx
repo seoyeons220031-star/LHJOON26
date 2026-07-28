@@ -406,10 +406,15 @@ function ChatRoom() {
         // Mark conversation read
         void markConversationRead(id);
       } catch (e) {
-        if (!cached) {
-          toast.error(e instanceof Error ? e.message : "채팅을 불러오지 못했습니다.");
-          navigate({ to: "/chats" });
-        }
+        console.warn("Chat load exception handled:", e);
+        if (!alive) return;
+        setConv((prev) => prev || {
+          is_group: false,
+          name: null,
+          title: "채팅방",
+          pinned_message_id: null,
+          theme_slug: "mint",
+        });
       } finally {
         if (alive) setLoading(false);
       }

@@ -261,84 +261,97 @@ export async function removeFriend(friendId: string) {
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const { data: u } = await supabase.auth.getUser();
-  let me = u.user?.id;
-  if (!me) {
-    const { data: s } = await supabase.auth.getSession();
-    me = s.session?.user?.id;
-  }
+  const me = await getAuthUserId();
   if (!me) return [];
 
-  const { data: myParts } = await supabase
-    .from("conversation_participants")
-    .select("conversation_id, last_read_at, muted")
-    .eq("user_id", me);
-  const convIds = (myParts ?? []).map((p) => p.conversation_id);
-  if (convIds.length === 0) return [];
+  try {
+    const { data: myParts, error: partsErr } = await supabase
+      .from("conversation_participants")
+      .select("conversation_id, last_read_at, muted")
+      .eq("user_id", me);
+    if (partsErr) {
+      console.warn("Error fetching conversation_participants:", partsErr);
+    }
+    const convIds = (myParts ?? []).map((p) => p.conversation_id);
+    if (convIds.length === 0) return [];
 
-  const { data: convs } = await supabase
-    .from("conversations")
-    .select("*")
-    .in("id", convIds)
-    .order("last_message_at", { ascending: false });
+    const { data: convs, error: convsErr } = await supabase
+      .from("conversations")
+      .select("*")
+      .in("id", convIds);
+    if (convsErr) {
+      console.warn("Error fetching conversations:", convsErr);
+    }
 
-  const { data: allParts } = await supabase
-    .from("conversation_participants")
-    .select("conversation_id, user_id, last_read_at")
-    .in("conversation_id", convIds);
+    const { data: allParts } = await supabase
+      .from("conversation_participants")
+      .select("conversation_id, user_id, last_read_at")
+      .in("conversation_id", convIds);
 
-  const otherIds = Array.from(
-    new Set((allParts ?? []).map((p) => p.user_id).filter((id) => id !== me)),
-  );
-  const { data: profs } = otherIds.length
-    ? await supabase.from("profiles").select("*").in("id", otherIds)
-    : { data: [] as Profile[] };
-  const profMap = new Map((profs ?? []).map((p) => [p.id, sanitizeProfile(p)]));
+    const otherIds = Array.from(
+      new Set((allParts ?? []).map((p) => p.user_id).filter((id) => id !== me)),
+    );
+    const { data: profs } = otherIds.length
+      ? await supabase.from("profiles").select("*").in("id", otherIds)
+      : { data: [] as Profile[] };
+    const profMap = new Map((profs ?? []).map((p) => [p.id, sanitizeProfile(p)]));
 
-  const { data: myProf } = await supabase.from("profiles").select("*").eq("id", me).maybeSingle();
-  if (myProf) profMap.set(me, sanitizeProfile(myProf));
+    const { data: myProf } = await supabase.from("profiles").select("*").eq("id", me).maybeSingle();
+    if (myProf) profMap.set(me, sanitizeProfile(myProf));
 
-  const { data: recentMsgs } = await supabase
-    .from("messages")
-    .select("*")
-    .in("conversation_id", convIds)
-    .order("created_at", { ascending: false })
-    .limit(convIds.length * 20);
+    const { data: recentMsgs } = await supabase
+      .from("messages")
+      .select("*")
+      .in("conversation_id", convIds)
+      .order("created_at", { ascending: false })
+      .limit(convIds.length * 30);
 
-  const lastMsgMap = new Map<string, Message>();
-  for (const m of recentMsgs ?? []) {
-    if (!lastMsgMap.has(m.conversation_id)) lastMsgMap.set(m.conversation_id, m as Message);
+    const lastMsgMap = new Map<string, Message>();
+    for (const m of recentMsgs ?? []) {
+      if (!lastMsgMap.has(m.conversation_id)) lastMsgMap.set(m.conversation_id, m as Message);
+    }
+
+    const myReadMap = new Map((myParts ?? []).map((p) => [p.conversation_id, p.last_read_at]));
+    const myMuteMap = new Map((myParts ?? []).map((p) => [p.conversation_id, Boolean(p.muted)]));
+
+    const rawList = convs ?? [];
+    // Sort chronologically by latest message or creation time
+    rawList.sort((a, b) => {
+      const timeA = a.last_message_at || a.created_at || "";
+      const timeB = b.last_message_at || b.created_at || "";
+      return timeB.localeCompare(timeA);
+    });
+
+    const summaries: ConversationSummary[] = rawList.map((c) => {
+      const parts = (allParts ?? []).filter((p) => p.conversation_id === c.id);
+      const others = parts.filter((p) => p.user_id !== me);
+      const participants = others
+        .map((p) => profMap.get(p.user_id))
+        .filter((v): v is Profile => Boolean(v));
+      const myRead = myReadMap.get(c.id) ?? new Date(0).toISOString();
+      const unread = (recentMsgs ?? []).filter(
+        (m) => m.conversation_id === c.id && m.sender_id !== me && m.created_at > myRead,
+      ).length;
+      return {
+        id: c.id,
+        is_group: c.is_group,
+        name: (c as { name?: string | null }).name ?? null,
+        title: c.title,
+        last_message_at: c.last_message_at || c.created_at || new Date().toISOString(),
+        participants,
+        last_message: lastMsgMap.get(c.id) ?? null,
+        unread_count: unread,
+        my_last_read_at: myRead,
+        muted: myMuteMap.get(c.id) ?? false,
+        pinned_message_id: (c as { pinned_message_id?: string | null }).pinned_message_id ?? null,
+      };
+    });
+
+    return summaries;
+  } catch (e) {
+    console.warn("listConversations failed:", e);
+    return [];
   }
-
-  const myReadMap = new Map((myParts ?? []).map((p) => [p.conversation_id, p.last_read_at]));
-  const myMuteMap = new Map((myParts ?? []).map((p) => [p.conversation_id, Boolean(p.muted)]));
-
-  const summaries: ConversationSummary[] = (convs ?? []).map((c) => {
-    const parts = (allParts ?? []).filter((p) => p.conversation_id === c.id);
-    const others = parts.filter((p) => p.user_id !== me);
-    const participants = others
-      .map((p) => profMap.get(p.user_id))
-      .filter((v): v is Profile => Boolean(v));
-    const myRead = myReadMap.get(c.id) ?? new Date(0).toISOString();
-    const unread = (recentMsgs ?? []).filter(
-      (m) => m.conversation_id === c.id && m.sender_id !== me && m.created_at > myRead,
-    ).length;
-    return {
-      id: c.id,
-      is_group: c.is_group,
-      name: (c as { name?: string | null }).name ?? null,
-      title: c.title,
-      last_message_at: c.last_message_at,
-      participants,
-      last_message: lastMsgMap.get(c.id) ?? null,
-      unread_count: unread,
-      my_last_read_at: myRead,
-      muted: myMuteMap.get(c.id) ?? false,
-      pinned_message_id: (c as { pinned_message_id?: string | null }).pinned_message_id ?? null,
-    };
-  });
-
-  return summaries;
 }
 
 export async function openDirectConversation(otherUserId: string): Promise<string> {
@@ -578,14 +591,33 @@ export async function getConversationDetail(conversationId: string) {
   const me = await getAuthUserId();
   if (!me) throw new Error("Not signed in");
 
-  const [convRes, partsRes] = await Promise.all([
-    supabase.from("conversations").select("*").eq("id", conversationId).maybeSingle(),
-    supabase.from("conversation_participants").select("user_id, last_read_at, muted").eq("conversation_id", conversationId),
-  ]);
+  let convRes = await supabase.from("conversations").select("*").eq("id", conversationId).maybeSingle();
 
-  if (convRes.error) throw convRes.error;
-  if (!convRes.data) throw new Error("Conversation not found");
-  const conv = convRes.data;
+  // Retry up to 2 times with a 150ms delay for newly created rooms
+  if (!convRes.data && !convRes.error) {
+    await new Promise((r) => setTimeout(r, 150));
+    convRes = await supabase.from("conversations").select("*").eq("id", conversationId).maybeSingle();
+  }
+  if (!convRes.data && !convRes.error) {
+    await new Promise((r) => setTimeout(r, 200));
+    convRes = await supabase.from("conversations").select("*").eq("id", conversationId).maybeSingle();
+  }
+
+  const partsRes = await supabase
+    .from("conversation_participants")
+    .select("user_id, last_read_at, muted")
+    .eq("conversation_id", conversationId);
+
+  const conv = convRes.data || {
+    id: conversationId,
+    is_group: false,
+    name: null,
+    title: null,
+    pinned_message_id: null,
+    theme_slug: "mint",
+    created_at: new Date().toISOString(),
+  };
+
   const parts = partsRes.data ?? [];
 
   const ids = parts.map((p) => p.user_id);
@@ -598,12 +630,12 @@ export async function getConversationDetail(conversationId: string) {
   return {
     conversation: {
       id: conv.id,
-      is_group: conv.is_group,
+      is_group: conv.is_group ?? false,
       name: (conv as { name?: string | null }).name ?? null,
       title: conv.title ?? null,
       pinned_message_id: conv.pinned_message_id ?? null,
-      theme_slug: conv.theme_slug ?? null,
-      created_at: (conv as { created_at?: string }).created_at ?? null,
+      theme_slug: conv.theme_slug ?? "mint",
+      created_at: (conv as { created_at?: string }).created_at ?? new Date().toISOString(),
     },
     me,
     myMuted: Boolean(parts.find((p) => p.user_id === me)?.muted),
@@ -616,15 +648,23 @@ export async function getConversationDetail(conversationId: string) {
 }
 
 export async function loadMessages(conversationId: string): Promise<Message[]> {
-  const { data, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("conversation_id", conversationId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .limit(500);
-  if (error) throw error;
-  return (data ?? []) as Message[];
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1000);
+    if (error) {
+      console.warn("loadMessages warning:", error);
+      return [];
+    }
+    return (data ?? []) as Message[];
+  } catch (e) {
+    console.warn("loadMessages error:", e);
+    return [];
+  }
 }
 
 export async function getMessageById(id: string): Promise<Message | null> {

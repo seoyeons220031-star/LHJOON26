@@ -34,6 +34,21 @@ self.addEventListener("push", function (event) {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+self.addEventListener("message", function (event) {
+  if (event.data && event.data.type === "SHOW_NOTIFICATION") {
+    const { title, body, icon, badge, url, tag } = event.data;
+    const options = {
+      body: body || "새로운 메시지가 도착했습니다.",
+      icon: icon || "/lhjoon-logo.png",
+      badge: badge || "/favicon.png",
+      vibrate: [200, 100, 200],
+      tag: tag || "chat-notification",
+      data: { url: url || "/chats" },
+    };
+    event.waitUntil(self.registration.showNotification(title || "새 메시지", options));
+  }
+});
+
 self.addEventListener("notificationclick", function (event) {
   console.log("[Service Worker] Notification Clicked.");
   event.notification.close();

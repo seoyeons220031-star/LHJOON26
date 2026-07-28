@@ -106,7 +106,31 @@ function RootComponent() {
           });
         }
         console.log("[Push Subscription] Subscription object obtained:", JSON.stringify(sub));
-        localStorage.setItem("push_subscription", JSON.stringify(sub));
+        const subStr = JSON.stringify(sub);
+        localStorage.setItem("push_subscription", subStr);
+
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          if (userData?.user?.id) {
+            const uid = userData.user.id;
+            await supabase
+              .from("profiles")
+              .update({ push_subscription: subStr } as unknown as { push_subscription: string })
+              .eq("id", uid);
+
+            try {
+              await supabase.from("user_push_subscriptions").upsert({
+                user_id: uid,
+                subscription: subStr,
+                updated_at: new Date().toISOString(),
+              } as unknown as { user_id: string; subscription: string; updated_at: string }, { onConflict: "user_id" });
+            } catch {
+              // Table may not exist or column structure may vary
+            }
+          }
+        } catch (e) {
+          console.warn("[Push Subscription] Failed to save to Supabase profile:", e);
+        }
       } catch (err) {
         console.warn("[Push Subscription] Setup failed or skipped:", err);
       }
