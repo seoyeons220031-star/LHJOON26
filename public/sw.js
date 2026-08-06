@@ -16,16 +16,17 @@ self.addEventListener("push", function (event) {
     try {
       data = event.data.json();
     } catch (e) {
-      data = { title: "Chatterbox Live", body: event.data.text() };
+      data = { title: "새 메시지", body: event.data.text() };
     }
   }
 
-  const title = data.title || "Chatterbox Live";
+  const title = data.title || "새 메시지";
   const options = {
     body: data.body || "새로운 메시지가 도착했습니다.",
-    icon: data.icon || "/lhjoon-logo.png",
+    icon: data.icon || "/icon-192.png",
     badge: data.badge || "/favicon.png",
     vibrate: [200, 100, 200],
+    tag: data.tag || "chat-notification",
     data: {
       url: data.url || "/chats",
     },
@@ -39,7 +40,7 @@ self.addEventListener("message", function (event) {
     const { title, body, icon, badge, url, tag } = event.data;
     const options = {
       body: body || "새로운 메시지가 도착했습니다.",
-      icon: icon || "/lhjoon-logo.png",
+      icon: icon || "/icon-192.png",
       badge: badge || "/favicon.png",
       vibrate: [200, 100, 200],
       tag: tag || "chat-notification",
@@ -63,7 +64,6 @@ self.addEventListener("notificationclick", function (event) {
         includeUncontrolled: true,
       })
       .then(function (windowClients) {
-        // Look for an existing chat client window and focus it
         for (let i = 0; i < windowClients.length; i++) {
           let client = windowClients[i];
           const clientUrl = new URL(client.url, self.location.origin).href;
@@ -75,7 +75,6 @@ self.addEventListener("notificationclick", function (event) {
             return;
           }
         }
-        // If no window client is found, open a new one
         if (clients.openWindow) {
           return clients.openWindow(targetUrl);
         }

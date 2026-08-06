@@ -635,6 +635,44 @@ function ChatRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, me, qc]);
 
+  // iPad / PWA background reconnect & message re-fetch on focus/visibility change
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        try {
+          supabase.realtime.connect();
+        } catch (e) {
+          console.warn("supabase.realtime.connect failed:", e);
+        }
+        if (id) {
+          loadMessages(id)
+            .then((latestMsgs) => {
+              if (latestMsgs && latestMsgs.length > 0) {
+                setMessages((prev) => {
+                  const map = new Map(prev.map((m) => [m.id, m]));
+                  for (const m of latestMsgs) {
+                    map.set(m.id, m);
+                  }
+                  return Array.from(map.values()).sort((a, b) =>
+                    (a.created_at || "").localeCompare(b.created_at || "")
+                  );
+                });
+              }
+            })
+            .catch((e) => console.warn("Re-fetching messages on visibility change failed:", e));
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+    };
+  }, [id]);
+
   useEffect(() => {
     if (loading) return;
     const el = scrollRef.current;

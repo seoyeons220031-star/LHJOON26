@@ -833,7 +833,7 @@ function AddFriendModal({ onClose, onAdded }: { onClose: () => void; onAdded: ()
         const rows = await searchUsers(q);
         setResults(rows);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Search failed");
+        console.warn("Search failed:", e);
       } finally {
         setSearching(false);
       }
@@ -846,46 +846,79 @@ function AddFriendModal({ onClose, onAdded }: { onClose: () => void; onAdded: ()
     try {
       await addFriendById(p.id);
       setAdded((s) => new Set(s).add(p.id));
-      toast.success(`Added ${p.display_name}`);
+      toast.success("친구 요청을 보냈습니다");
       onAdded();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+      toast.error(err instanceof Error ? err.message : "친구 추가에 실패했습니다");
     } finally {
       setAddingId(null);
+    }
+  };
+
+  const handleDirectAdd = async () => {
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true);
+    try {
+      const prof = await addFriendByUsername(q);
+      setAdded((s) => new Set(s).add(prof.id));
+      toast.success("친구 요청을 보냈습니다");
+      onAdded();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "친구 추가에 실패했습니다");
+    } finally {
+      setSearching(false);
     }
   };
 
   return (
     <Modal onClose={onClose}>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Add friend</h2>
+        <h2 className="text-lg font-semibold">친구 추가</h2>
         <button onClick={onClose} className="rounded-full p-1 hover:bg-secondary">
           <X className="h-5 w-5" />
         </button>
       </div>
-      <div className="relative mb-3">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          autoFocus
-          placeholder="Search by name, @username, or email"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="w-full rounded-xl border border-input bg-background py-2.5 pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring"
-        />
+      <div className="relative mb-3 flex gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            autoFocus
+            placeholder="이름, @아이디 또는 이메일로 검색"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && results.length === 0 && query.trim()) {
+                handleDirectAdd();
+              }
+            }}
+            className="w-full rounded-xl border border-input bg-background py-2.5 pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        {query.trim() !== "" && (
+          <button
+            onClick={handleDirectAdd}
+            className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
+          >
+            <UserPlus className="h-3.5 w-3.5" /> 추가
+          </button>
+        )}
       </div>
       <div className="max-h-80 overflow-y-auto rounded-xl border border-border">
         {query.trim() === "" && (
           <div className="p-6 text-center text-sm text-muted-foreground">
-            Start typing to find friends.
+            검색어를 입력해 친구를 찾아보세요.
           </div>
         )}
         {query.trim() !== "" && searching && (
           <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Searching…
+            <Loader2 className="h-4 w-4 animate-spin" /> 검색 중…
           </div>
         )}
         {query.trim() !== "" && !searching && results.length === 0 && (
-          <div className="p-6 text-center text-sm text-muted-foreground">No users found.</div>
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            검색 결과가 없습니다. 입력 후 [추가] 버튼을 누르거나 엔터를 눌러 직접 친구를 추가해보세요.
+          </div>
         )}
         {results.map((p) => {
           if (!p) return null;
@@ -914,15 +947,15 @@ function AddFriendModal({ onClose, onAdded }: { onClose: () => void; onAdded: ()
               >
                 {isAdded ? (
                   <>
-                    <Check className="h-3.5 w-3.5" /> Added
+                    <Check className="h-3.5 w-3.5" /> 추가됨
                   </>
                 ) : isAdding ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Adding
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> 추가 중
                   </>
                 ) : (
                   <>
-                    <UserPlus className="h-3.5 w-3.5" /> Add
+                    <UserPlus className="h-3.5 w-3.5" /> 친구 추가
                   </>
                 )}
               </button>

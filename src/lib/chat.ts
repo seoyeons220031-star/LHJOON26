@@ -181,15 +181,63 @@ export async function listFriends(): Promise<Profile[]> {
 export async function searchUsers(q: string | null | undefined): Promise<Profile[]> {
   const query = (q || "").trim();
   if (!query) return [];
-  const { data, error } = await supabase.rpc("search_users", { _q: query });
-  if (error) throw error;
-  return (data ?? []).map(sanitizeProfile);
+  const userId = await getAuthUserId();
+
+  let results: Profile[] = [];
+  try {
+    const { data, error } = await supabase.rpc("search_users", { _q: query });
+    if (!error && data) {
+      results = (data as Profile[]).map(sanitizeProfile);
+    }
+  } catch (e) {
+    console.warn("search_users RPC failed, attempting fallback query:", e);
+  }
+
+  if (results.length === 0) {
+    const clean = query.replace(/^@/, "").toLowerCase();
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("*")
+      .or(`username.ilike.%${clean}%,email.ilike.%${clean}%,display_name.ilike.%${query}%`)
+      .limit(20);
+
+    if (profs && profs.length > 0) {
+      results = profs.map(sanitizeProfile);
+    }
+  }
+
+  if (userId) {
+    results = results.filter((p) => p.id !== userId);
+  }
+  return results;
 }
 
-export async function addFriendById(friendId: string | null | undefined): Promise<void> {
+export async function addFriendById(friendId: string | null | undefined): Promise<Profile> {
   if (!friendId) throw new Error("유효하지 않은 친구 ID입니다.");
-  const { error } = await supabase.rpc("add_friend", { _friend: friendId });
-  if (error) throw error;
+  const userId = await getAuthUserId();
+  if (!userId) throw new Error("로그인이 필요합니다.");
+  if (userId === friendId) throw new Error("자기 자신은 친구로 추가할 수 없습니다.");
+
+  const { data: prof } = await supabase.from("profiles").select("*").eq("id", friendId).maybeSingle();
+
+  const { error: insertErr } = await supabase.from("friendships").upsert(
+    [
+      { user_id: userId, friend_id: friendId },
+      { user_id: friendId, friend_id: userId },
+    ],
+    { onConflict: "user_id,friend_id" },
+  );
+
+  if (insertErr) {
+    console.warn("Direct friendships insert warning, attempting add_friend RPC:", insertErr);
+    const { error: rpcErr } = await supabase.rpc("add_friend", { _friend: friendId });
+    if (rpcErr) {
+      console.error("add_friend RPC failed:", rpcErr);
+      throw new Error("친구 추가에 실패했습니다.");
+    }
+  }
+
+  return sanitizeProfile(prof || { id: friendId, display_name: "친구" });
 }
 
 export async function updateMyProfile(input: {
@@ -229,27 +277,37 @@ export async function uploadAvatar(file: File): Promise<string> {
   return signed.signedUrl;
 }
 
-export async function addFriendByUsername(username: string | null | undefined): Promise<Profile> {
+export async function addFriendByUsername(usernameInput: string | null | undefined): Promise<Profile> {
   const userId = await getAuthUserId();
-  if (!userId) throw new Error("Not signed in");
-  if (!username) throw new Error("사용자명을 입력해 주세요.");
-  const clean = username.trim().replace(/^@/, "").toLowerCase();
-  const { data: prof, error } = await supabase
+  if (!userId) throw new Error("로그인이 필요합니다.");
+  if (!usernameInput || !usernameInput.trim()) throw new Error("사용자명이나 이메일을 입력해 주세요.");
+  
+  const clean = usernameInput.trim().replace(/^@/, "");
+  const lower = clean.toLowerCase();
+
+  const { data: profs } = await supabase
     .from("profiles")
     .select("*")
-    .eq("username", clean)
-    .maybeSingle();
-  if (error) throw error;
-  if (!prof) throw new Error("User not found");
-  if (prof.id === userId) throw new Error("That's you!");
-  const { error: e1 } = await supabase.from("friendships").upsert(
-    [
-      { user_id: userId, friend_id: prof.id },
-      { user_id: prof.id, friend_id: userId },
-    ],
-    { onConflict: "user_id,friend_id" },
-  );
-  if (e1) throw e1;
+    .or(`username.ilike.${lower},email.ilike.${lower},display_name.ilike.${clean}`)
+    .limit(1);
+
+  let prof = profs && profs.length > 0 ? profs[0] : null;
+
+  if (!prof) {
+    try {
+      const { data: rpcData } = await supabase.rpc("search_users", { _q: clean });
+      if (rpcData && rpcData.length > 0) {
+        prof = rpcData[0];
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!prof) throw new Error("사용자를 찾을 수 없습니다.");
+  if (prof.id === userId) throw new Error("자기 자신은 친구로 추가할 수 없습니다.");
+
+  await addFriendById(prof.id);
   return sanitizeProfile(prof);
 }
 
@@ -470,6 +528,21 @@ export async function sendMessage(
     await supabase.from("conversations").update({ last_message_at: now }).eq("id", conversationId);
   } catch {
     // Handled by Postgres trigger
+  }
+
+  // Asynchronously trigger Web Push notification to other conversation participants
+  if (typeof window !== "undefined") {
+    fetch("/api/send-push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId,
+        senderId: userId,
+        text: content || (attachment ? `파일: ${attachment.name}` : "메시지"),
+      }),
+    }).catch((err) => {
+      console.warn("Background push notification trigger error:", err);
+    });
   }
 
   return data as Message;

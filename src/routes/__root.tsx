@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
+import { VAPID_PUBLIC_KEY, urlBase64ToUint8Array } from "@/lib/vapid-config";
 
 function NotFoundComponent() {
   return (
@@ -75,18 +76,6 @@ function RootComponent() {
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
-    // Helper to convert VAPID public key string to Uint8Array
-    const urlBase64ToUint8Array = (base64String: string) => {
-      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-      const rawData = window.atob(base64);
-      const outputArray = new Uint8Array(rawData.length);
-      for (let i = 0; i < rawData.length; ++i) {
-        outputArray[i] = rawData.charCodeAt(i);
-      }
-      return outputArray;
-    };
-
     const setupPushSubscription = async (reg: ServiceWorkerRegistration) => {
       try {
         if (!reg.pushManager) {
@@ -96,10 +85,8 @@ function RootComponent() {
 
         let sub = await reg.pushManager.getSubscription();
         if (!sub) {
-          console.log("[Push Subscription] Subscribing with public key...");
-          const publicKey =
-            "BEl62iS7_Jl9nw5dbM87Fh-7_A3g6T0K_3g7_T1-9A8J4_Q-F62_f8e_r8_W9A9_A8J4_Q";
-          const convertedKey = urlBase64ToUint8Array(publicKey);
+          console.log("[Push Subscription] Subscribing with VAPID public key...");
+          const convertedKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
           sub = await reg.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: convertedKey,
